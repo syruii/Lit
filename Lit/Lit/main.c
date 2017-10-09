@@ -17,6 +17,7 @@
 #include <avr/interrupt.h>
 #include <avr/eeprom.h>
 #include <util/twi.h>
+#include <util/delay.h>
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //                    STRUCT DEFINITIONS
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -264,10 +265,26 @@ ISR(INT0_vect)
 			newRGB.blue = (uint8_t) (eeprom_read_byte((uint8_t*) (SCHEDULE_2 + hour_offset + BLUE_OFFSET)));
 			break;
 	}
-	// OC0A = RED	OC1A = BLUE 	OC1B = GREEN	OC2A = WHITE	
+	// OC0A = RED	OC1A = BLUE 	OC1B = GREEN	OC2A = WHITE
+	SColorRGB oldRGB;
+	oldRGB.red = OCR0A;
+	oldRGB.green = OCR1B;
+	oldRGB.blue = OCR1A;
+	
+	int8_t red_step = (newRGB.red - oldRGB.red) /10 ;	// truncating is fine
+	int8_t green_step = (newRGB.green - oldRGB.green) /10;
+	int8_t blue_step = (newRGB.blue - oldRGB.blue) /10;
+	
+	// steps through 9 different color steps until reach final RGB
+	for (int i = 0; i < 9; ++i) {
+		OCR0A += red_step;
+		OCR1A += blue_step;
+		OCR1B += green_step;
+		_delay_ms(10);
+	}
 	OCR0A = newRGB.red;
 	OCR1A = newRGB.blue;
-	OCR1B = newRGB.green;
+	OCR1B - newRGB.green;
 }
 
 void init(void)
