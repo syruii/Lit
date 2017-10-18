@@ -17,6 +17,7 @@
 #include <avr/interrupt.h>
 #include <avr/eeprom.h>
 #include <util/twi.h>
+#include "rtc.h"
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //                    STRUCT DEFINITIONS
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -37,23 +38,8 @@ typedef struct {
 #define BLUE_OFFSET       0x02        // offset for blue byte
 #define HOUR_OFFSET       0x03		  // offset for another "hour"
 
-// Should only be called once to program before. Date-time is set at an arbitrary date for demonstration
-// purposes default is 9:30AM in 24HOUR
-void rtcc_init(void)
-{	
-	rtcc_wr(ALM_0,ADDR_CTRL)   ;	 // enable alarm 0
-	rtcc_wr(0x00,ADDR_ALM0SEC) ;     // set up alarm to trigger every minute
-	rtcc_wr(ALMx_POL|ALMxC_SEC,ADDR_ALM0CTL); // interrupt polarity is logic high, triggers at 00 seconds
-	// set up time
-	rtcc_wr(0x10,ADDR_YEAR)    ;     // initialize YEAR  register : doesn't matter
-	rtcc_wr(0x03,ADDR_MNTH)    ;     // initialize MONTH register : doesn't matter
-	rtcc_wr(0x01,ADDR_DATE)    ;     // initialize DATE  register : doesn't matter
-	rtcc_wr(0x09,ADDR_HOUR)    ;     // initialize HOUR  register
-	rtcc_wr(0x00,ADDR_MIN)     ;     // initialize MIN   register
-	rtcc_wr(0x30|START_32KHZ,ADDR_SEC) ;   //init SEC   register, set START bit 
-}
 
-ISR(INT0_vect)
+void update_pwm(rtc_time *rtc)
 {
 	/* Interrupt code goes here */
 	// read EEPROM for MIN + schedule
@@ -62,10 +48,7 @@ ISR(INT0_vect)
 	SColorRGB newRGB;
 	// will always be zero
 	unsigned int schedule_num = (unsigned int) (eeprom_read_byte((uint8_t*)SCHEDULE_NUM));
-	uint8_t minute_reg;
-	rtcc_read(&minute_reg, ADDR_MIN);
-	// convert minute reg into actual number
-	uint8_t minute = ((minute_reg & MINUTE_TENS) >> 4) * 10 + (minute_reg & MINUTE_ONES);
+	uint8_t minute = rtc->minute;
 	uint8_t hour_offset = (minute % 24) * HOUR_OFFSET;
 	switch (schedule_num) {
 		case 0:
@@ -89,8 +72,10 @@ ISR(INT0_vect)
 	OCR1A = newRGB.blue;
 	OCR1B = newRGB.green;
 }
-
-void init(void)
+// Should only be called once to program before. Date-time is set at an arbitrary date for demonstration
+// purposes default is 9:30AM in 24HOUR
+// PD4 - RESET, PD6 - CLK, PD7 - IO
+void init(rtc_time* rtc)
 {
 	uint8_t color_array[72] = { 0x00, 0xFF, 0x00,
 								0xEB, 0x78, 0xE6,
@@ -116,14 +101,7 @@ void init(void)
 								0x2D, 0x15, 0x18,
 								0x6A, 0x4B, 0xC9,
 								0x47, 0xBB, 0xCE };
-	// http://ww1.microchip.com/downloads/en/DeviceDoc/20002266H.pdf
-	i2c_init();
-	rtcc_init();
-	rtcc_int_reset();
-	// set up interrupts
-	// http://www.atmel.com/Images/Atmel-42176-ATmega48PB-88PB-168PB_Datasheet.pdf
-	EICRA |= ISC11	          ;     // trigger on rising edge of INT0
-	EIMSK |= (1<<INT0)        ;     // turn on interrupt
+		
 	// actual code will run per hour, but for demonstration purposes, only 6
 	// schedule number is set to 0
 	eeprom_write_byte((uint8_t*)SCHEDULE_NUM, 0x00);
@@ -140,12 +118,25 @@ void init(void)
 	TCCR2A = COM2A1 | WGM01 | WGM00;          // non-inverting mode on OC2A
 	TCCR2B = CS00;
 	
+	ds1302_init();
+	ds1302_update(rtc);
+	rtc->hour_format = AM;
+	ds1302_set_time(rtc, YEAR, 1);
+	ds1302_set_time(rtc, MONTH, 10);
+	ds1302_set_time(rtc, DATE, 19);
+	ds1302_set_time(rtc, DAY, thu);
+	ds1302_set_time(rtc, HOUR, 9);
+	ds1302_set_time(rtc, MIN, 0);
+	ds1302_set_time(rtc, SEC, 0);		// setting seconds clears CLOCK HALT bit, which starts the timer
+	
 }
 
 
 int main(void)
 {
-	init();
+	struct rtc_time ds1302;
+	struct rtc_time* rtc = &ds1302;
+	init(rtc);
 	/*	Things to do:
 		Which sets stack variables of RGBW by reading from the EEPROM which the PWMs use
 		https://protostack.com.au/2011/01/reading-and-writing-atmega168-eeprom/
@@ -155,7 +146,12 @@ int main(void)
 	
     /* Arbitrary loop */
     while (1) {
-		continue;
+		unsigned char temp = rtc->minute;
+		ds1302_update_time(rtc, MIN);
+		if (temp != rtc->minute) {
+			update_pwm(rtc);
+		}
+		
 	}
 }
 
