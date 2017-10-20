@@ -10,7 +10,7 @@
 #define ds1302_PORT PORTD
 #define ds1302_DDR DDRD
 #define ds1302_PIN PIND
-#define rst 4
+#define rst 3
 #define clk 6
 #define io 7
 

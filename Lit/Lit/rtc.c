@@ -130,7 +130,7 @@ void ds1302_update(struct rtc_time * time)
 
 void ds1302_init(void) // sets all pins as output and low
 {
-	ds1302_PORT |= (1<<rst) | (1<<clk) | (1<<io);
+	ds1302_DDR |= (1<<rst) | (1<<clk) | (1<<io);
 	clk_0(); // sclk -> 0
 	rst_0(); // rst -> 0
 	io_0(); // io -> 0
@@ -201,8 +201,7 @@ unsigned char read()	 //reads the ds1302 reply
 		clk_0();
 		_delay_us(2);
 		TmpByte = 0;
-		if(bit_is_set(ds1302_PIN,io))
-		TmpByte = 1;
+		if(bit_is_set(ds1302_PIN,io)) TmpByte = 1;
 		TmpByte <<= 7;
 		R_Byte >>= 1;
 		R_Byte |= TmpByte;

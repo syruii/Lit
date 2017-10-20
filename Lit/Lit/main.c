@@ -4,20 +4,18 @@
  * Created: 7/10/2017 6:19:25 PM
  * Author : Syrup
  */ 
-#ifndef F_CPU
-// 1 MHz default internal system clock
-#define F_CPU 1000000UL
-#endif
 
-#define F_SCL 100000UL // SCL frequency
-#define Prescaler 1
-#define TWBR_val ((((F_CPU / F_SCL) / Prescaler) - 16 ) / 2)
+#define F_CPU 1000000UL
 
 #include <avr/io.h>
+#include <util/delay.h>
 #include <avr/interrupt.h>
 #include <avr/eeprom.h>
 #include <util/twi.h>
 #include "rtc.h"
+
+void update_pwm(struct rtc_time* rtc);
+void init();
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //                    STRUCT DEFINITIONS
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -39,13 +37,15 @@ typedef struct {
 #define HOUR_OFFSET       0x03		  // offset for another "hour"
 
 
-void update_pwm(rtc_time *rtc)
-{
+void update_pwm(struct rtc_time* rtc) {
 	/* Interrupt code goes here */
 	// read EEPROM for MIN + schedule
 	// 24 different color settings in EEPROM, but for speed interrupt is based on minute change
 	// minute is mod 24 to keep it working
 	SColorRGB newRGB;
+	newRGB.red = 0;
+	newRGB.green = 0;
+	newRGB.blue = 0;
 	// will always be zero
 	unsigned int schedule_num = (unsigned int) (eeprom_read_byte((uint8_t*)SCHEDULE_NUM));
 	uint8_t minute = rtc->minute;
@@ -69,9 +69,9 @@ void update_pwm(rtc_time *rtc)
 	}
 	// OC0A = RED	OC1A = BLUE 	OC1B = GREEN	OC2A = WHITE
 	SColorRGB oldRGB;
-	oldRGB.red = OCR0A;
-	oldRGB.green = OCR1B;
-	oldRGB.blue = OCR1A;
+	oldRGB.red = OCR1AL;
+	oldRGB.green = OCR1BL;
+	oldRGB.blue = OCR0;
 	
 	int8_t red_step = (newRGB.red - oldRGB.red) /10 ;	// truncating is fine
 	int8_t green_step = (newRGB.green - oldRGB.green) /10;
@@ -79,20 +79,19 @@ void update_pwm(rtc_time *rtc)
 	
 	// steps through 9 different color steps until reach final RGB
 	for (int i = 0; i < 9; ++i) {
-		OCR0A += red_step;
-		OCR1A += blue_step;
-		OCR1B += green_step;
+		OCR1AL += red_step;
+		OCR0 += blue_step;
+		OCR1BL += green_step;
 		_delay_ms(10);
 	}
-	OCR0A = newRGB.red;
-	OCR1A = newRGB.blue;
-	OCR1B - newRGB.green;
+	OCR1AL = newRGB.red;
+	OCR0 = newRGB.blue;
+	OCR1BL - newRGB.green;
 }
 // Should only be called once to program before. Date-time is set at an arbitrary date for demonstration
 // purposes default is 9:30AM in 24HOUR
 // PD4 - RESET, PD6 - CLK, PD7 - IO
-void init(rtc_time* rtc)
-{
+void init(struct rtc_time* rtc) {
 	uint8_t color_array[72] = { 0x00, 0xFF, 0x00,
 								0xEB, 0x78, 0xE6,
 								0x25, 0x11, 0xAE,
@@ -117,6 +116,15 @@ void init(rtc_time* rtc)
 								0x2D, 0x15, 0x18,
 								0x6A, 0x4B, 0xC9,
 								0x47, 0xBB, 0xCE };
+	// SET EVERYTHING AS INPUT AND ENABLE PULL UP
+	// DS1302 reconfigures later
+	DDRC = 0;
+	PORTC = 0xFF;
+	DDRB = 0;
+	PORTB = 0xFF;
+	DDRD = 0;
+	PORTD = 0XFF;
+	
 		
 	// actual code will run per hour, but for demonstration purposes, only 6
 	// schedule number is set to 0
@@ -125,14 +133,13 @@ void init(rtc_time* rtc)
 		uint8_t offset = i * RED_OFFSET;
 		eeprom_write_byte((uint8_t*)(SCHEDULE_0 + offset), color_array[i]);
 	}
-	DDRB = 0b00001110;    // turn on PB1|OC1A and PB2|OC1B and PB3|OC2A  
-	DDRD = 0b01000000;    // turn on PD6|OC0A
-	TCCR0A = COM0A1 | WGM01 | WGM00;          // non-inverting mode on OC0A -> clear OC0A at MATCH, set at TOP (max value counter), fast PWM
-	TCCR0B = CS00;                            // no pre-scaling
-	TCCR1A = COM1A1 | COM1B1 | WGM01 | WGM00; // non-inverting mode on 0C1A, 0C1B, fast PWM
-	TCCR1B = CS00;
-	TCCR2A = COM2A1 | WGM01 | WGM00;          // non-inverting mode on OC2A
-	TCCR2B = CS00;
+	DDRB |= (1 << PB3);    // turn on PB3 (OC2)
+	DDRD |= (1 << PD5);    // turn on PD5 (OC1A) and PD4 (OC1B)
+	DDRD |= (1 << PD4); 
+	TCCR0 |= (1 << WGM00) | (1 << WGM01) | (1 << COM01) | (1 << CS00); // fast non-inverted pwm
+	TCCR1A |= (1 << WGM10) | (1 << COM1A1) | (1 << COM1B1); // fast non-inverted pwm
+	TCCR1B |= (1 << WGM12) | ( 1 << CS10);
+	// TCCR2 |= (1 << WGM21) | (1 << WGM20) | (1 << COM21) | (1 << CS20); // fast non-inverted pwm
 	
 	ds1302_init();
 	ds1302_update(rtc);
@@ -169,5 +176,6 @@ int main(void)
 		}
 		
 	}
+	return 0;
 }
 
